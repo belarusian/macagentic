@@ -1,0 +1,4 @@
+model = "openai/gpt-5.4-mini"
+
+# openai_api_key = "sk-proj-example-key"
+# custom_prompt = "Always answer concisely."

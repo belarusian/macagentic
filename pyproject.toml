@@ -6,5 +6,23 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "litellm>=1.75.5,<1.92",
+    "markdown-it-py>=4.2.0",
     "mini-swe-agent",
+    "pyobjc>=12.2.1",
+    "quickmachotkey>=2025.7.28",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.setuptools.package-data]
+"macagentic.ui" = ["assets/*.png"]
+"macagentic.agent" = ["prompts/*.md"]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not uitest'"
+markers = [
+    "uitest: opens the native Cocoa UI",
 ]
