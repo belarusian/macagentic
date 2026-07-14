@@ -13,3 +13,4 @@ debug_screenshot.png
 
 # Local environment variables
 .env
+config.local
