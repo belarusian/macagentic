@@ -23,6 +23,7 @@ from Cocoa import (
     NSCommandKeyMask,
     NSControlKeyMask,
     NSFont,
+    NSFontAttributeName,
     NSForegroundColorAttributeName,
     NSImage,
     NSImageView,
@@ -32,6 +33,7 @@ from Cocoa import (
     NSNoBorder,
     NSObject,
     NSPanel,
+    NSParagraphStyleAttributeName,
     NSPasteboard,
     NSScreen,
     NSScrollView,
@@ -42,12 +44,15 @@ from Cocoa import (
     NSThread,
     NSView,
     NSWorkspace,
+    NSMutableAttributedString,
+    NSMutableParagraphStyle,
 )
 from Foundation import NSURL
 from quickmachotkey import mask, quickHotKey
 from quickmachotkey.constants import kVK_Space, optionKey
 
 from macagentic.agent import Control, Transcript
+from macagentic.agent.usage import UsageSnapshot, display_model_name
 from macagentic.ui.markdown import FONT_SIZE, MarkdownRenderer
 
 
@@ -387,6 +392,7 @@ class MacAgenticUI:
             transcript=transcript,
             ask_permission=self.ask_permission,
             ask_clarification=self.ask_clarification,
+            on_usage=self._usage_changed,
             custom_instructions=self.custom_instructions,
             show_tool_output=self.show_tool_output,
         )
@@ -457,6 +463,9 @@ class MacAgenticUI:
                 daemon=True,
             )
             tab.thread.start()
+        self.request_update()
+
+    def _usage_changed(self, _usage: UsageSnapshot) -> None:
         self.request_update()
 
     def interrupt_active(self, submit_text: str = "") -> None:
@@ -639,27 +648,65 @@ class MacAgenticUI:
         image.setImageScaling_(3)
         bar.addSubview_(image)
 
-        status = self.model_name or "openai/gpt-5-mini"
-        text_field_width = 180
+        snapshot = self.active_tab.control.usage.snapshot()
+        model = display_model_name(
+            self.model_name or "openai/gpt-5-mini"
+        )
+        line1 = f"{model} / ${snapshot.cost:.2f}"
+        line2 = (
+            f"Input: {snapshot.input_tokens:,} / "
+            f"Cached: {snapshot.cached_input_tokens:,}"
+        )
+        line3 = (
+            f"Writes: {snapshot.cache_write_tokens:,} / "
+            f"Output: {snapshot.output_tokens:,}"
+        )
+        status = f"{line1}\n{line2}\n{line3}"
+        text_field_width = 240
         text_y = icon_y
         text_height = self.top_bar_height - text_y - 10
-        label = NSTextField.alloc().initWithFrame_(
+        label = NSTextView.alloc().initWithFrame_(
             (
                 (self.content_width - text_field_width - 8, text_y),
                 (text_field_width, text_height),
             )
         )
-        label.setStringValue_(status)
+        label.setString_(status)
         label.setEditable_(False)
         label.setSelectable_(False)
-        label.setBezeled_(False)
         label.setDrawsBackground_(False)
-        label.setAlignment_(2)
-        label.setTextColor_(
-            NSColor.colorWithCalibratedWhite_alpha_(0.45, 1.0)
+        label.setTextContainerInset_((0.0, 0.0))
+
+        paragraph = NSMutableParagraphStyle.alloc().init()
+        paragraph.setAlignment_(2)
+        first_line_attributes = {
+            NSFontAttributeName: NSFont.systemFontOfSize_(11.0),
+            NSForegroundColorAttributeName: (
+                NSColor.colorWithCalibratedWhite_alpha_(0.45, 1.0)
+            ),
+            NSParagraphStyleAttributeName: paragraph,
+        }
+        detail_attributes = {
+            NSFontAttributeName: NSFont.systemFontOfSize_(11.0),
+            NSForegroundColorAttributeName: (
+                NSColor.colorWithCalibratedWhite_alpha_(0.6, 1.0)
+            ),
+            NSParagraphStyleAttributeName: paragraph,
+        }
+        attributed = (
+            NSMutableAttributedString.alloc().initWithString_(status)
         )
-        label.setFont_(NSFont.systemFontOfSize_(11.0))
+        attributed.addAttributes_range_(
+            first_line_attributes,
+            (0, len(line1)),
+        )
+        attributed.addAttributes_range_(
+            detail_attributes,
+            (len(line1), len(status) - len(line1)),
+        )
+        label.textStorage().setAttributedString_(attributed)
         bar.addSubview_(label)
+        self.top_bar_text_view = label
 
     def _render_tabs(self, root, y: float) -> None:
         container = NSView.alloc().initWithFrame_(

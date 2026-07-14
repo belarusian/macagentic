@@ -2,8 +2,9 @@ import os
 import signal
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
-from macagentic.agent.control import Control, load_system_prompt
+from macagentic.agent.control import Control, ResponseModel, load_system_prompt
 from macagentic.agent.transcript import Transcript
 
 EXPECTED_DEFAULT_PROMPT = """You are an interactive coding assistant with access to a bash tool.
@@ -18,13 +19,33 @@ commands for you. Do not modify files unless the user requests a change.
 """
 
 
+def text_response(
+    content: str,
+    *,
+    usage: dict | None = None,
+    cost: float = 0.0,
+) -> dict:
+    response = {
+        "object": "response",
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": content},
+                ],
+            }
+        ],
+        "extra": {"actions": [], "cost": cost},
+    }
+    if usage is not None:
+        response["usage"] = usage
+    return response
+
+
 class FakeModel:
     def query(self, _messages):
-        return {
-            "role": "assistant",
-            "content": "The answer is **2**.",
-            "extra": {"actions": []},
-        }
+        return text_response("The answer is **2**.")
 
 
 class SignallingModel:
@@ -40,11 +61,7 @@ class BlockingModel:
     def query(self, _messages):
         self.started.set()
         self.release.wait()
-        return {
-            "role": "assistant",
-            "content": "Late response",
-            "extra": {"actions": []},
-        }
+        return text_response("Late response")
 
 
 class ToolModel:
@@ -55,20 +72,34 @@ class ToolModel:
         self.calls += 1
         if self.calls == 1:
             return {
-                "role": "assistant",
-                "content": None,
+                "object": "response",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": "call-1",
+                        "name": "bash",
+                        "arguments": '{"command":"printf hello"}',
+                    }
+                ],
                 "extra": {
-                    "actions": [{"command": "printf 'hello\\n'"}],
+                    "actions": [
+                        {
+                            "command": "printf 'hello\\n'",
+                            "tool_call_id": "call-1",
+                        }
+                    ],
                 },
             }
-        return {
-            "role": "assistant",
-            "content": "Done.",
-            "extra": {"actions": []},
-        }
+        return text_response("Done.")
 
     def format_observation_messages(self, _response, _outputs):
-        return [{"role": "tool", "content": "hello"}]
+        return [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": "hello",
+            }
+        ]
 
 
 class FakeEnvironment:
@@ -96,6 +127,33 @@ def test_custom_instructions_are_appended_to_default_prompt() -> None:
     )
 
 
+def test_response_model_allows_text_and_preserves_reasoning_items() -> None:
+    model = object.__new__(ResponseModel)
+    text_only = SimpleNamespace(
+        output=[SimpleNamespace(type="message")]
+    )
+
+    assert model._parse_actions(text_only) == []
+    assert model._prepare_messages_for_api(
+        [
+            {"role": "system", "content": "Instructions"},
+            {
+                "object": "response",
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "id": "reasoning-1",
+                    }
+                ],
+                "extra": {"cost": 0.01},
+            },
+        ]
+    ) == [
+        {"role": "system", "content": "Instructions"},
+        {"type": "reasoning", "id": "reasoning-1"},
+    ]
+
+
 def test_control_writes_only_conversation_text() -> None:
     transcript = Transcript()
     outputs = []
@@ -113,6 +171,32 @@ def test_control_writes_only_conversation_text() -> None:
     )
     assert outputs == ["The answer is **2**."]
     assert "tool" not in transcript.getvalue().lower()
+
+
+def test_control_accumulates_response_usage() -> None:
+    updates = []
+    control = Control(Path.cwd(), on_usage=updates.append)
+    control.model = FakeModel()
+    control.model.query = lambda _messages: text_response(
+        "Done.",
+        usage={
+            "input_tokens": 120,
+            "input_tokens_details": {
+                "cached_tokens": 80,
+                "cache_write_tokens": 30,
+            },
+            "output_tokens": 15,
+        },
+        cost=0.125,
+    )
+
+    control.run_turn("Track it")
+
+    assert updates[-1].input_tokens == 120
+    assert updates[-1].cached_input_tokens == 80
+    assert updates[-1].cache_write_tokens == 30
+    assert updates[-1].output_tokens == 15
+    assert updates[-1].cost == 0.125
 
 
 def test_console_ctrl_c_interrupts_and_returns_to_prompt(
@@ -146,6 +230,26 @@ def test_interrupt_releases_turn_blocked_on_model_query() -> None:
     assert "Late response" not in control.transcript.getvalue()
 
 
+def test_interrupted_response_discards_pending_native_tool_call() -> None:
+    control = Control(Path.cwd())
+    control.messages.append(
+        {
+            "object": "response",
+            "output": [{"type": "function_call"}],
+            "extra": {"actions": [{"command": "sleep 1"}]},
+        }
+    )
+
+    control._discard_incomplete_tool_call()
+
+    assert control.messages == [
+        {
+            "role": "system",
+            "content": load_system_prompt(),
+        }
+    ]
+
+
 def test_tool_output_is_visible_only_when_enabled() -> None:
     hidden = Control(Path.cwd())
     hidden.model = ToolModel()
@@ -167,3 +271,7 @@ def test_tool_output_is_visible_only_when_enabled() -> None:
     assert "**Tool:** `printf 'hello\\n'` (exit 0)" in control.transcript.getvalue()
     assert "```text\nhello\n```" in control.transcript.getvalue()
     assert visible and visible[0].startswith("**Tool:**")
+    assert any(
+        message.get("type") == "function_call_output"
+        for message in control.messages
+    )

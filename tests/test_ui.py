@@ -4,17 +4,35 @@ import threading
 import pytest
 
 from macagentic.agent.transcript import Transcript
+from macagentic.agent.usage import UsageAccumulator
 from macagentic.ui.testing import UITestDriver
 
 
 class FakeControl:
     def __init__(self, _workspace, **kwargs):
         self.transcript = kwargs.get("transcript") or Transcript()
+        self.on_usage = kwargs.get("on_usage")
+        self.usage = UsageAccumulator()
         self.interrupted = False
 
     def run_turn(self, text: str) -> None:
         self.transcript.write(f"**You:** {text}\n\n")
         self.transcript.write("# Agent reply\n\nRendered **Markdown**.\n")
+        snapshot = self.usage.add_response(
+            {
+                "usage": {
+                    "input_tokens": 12345,
+                    "input_tokens_details": {
+                        "cached_tokens": 8192,
+                        "cache_write_tokens": 4096,
+                    },
+                    "output_tokens": 1024,
+                },
+                "extra": {"cost": 0.65},
+            }
+        )
+        if snapshot is not None and self.on_usage is not None:
+            self.on_usage(snapshot)
 
     def interrupt(self) -> None:
         self.interrupted = True
@@ -47,6 +65,22 @@ def test_ui_passively_renders_transcript(monkeypatch) -> None:
     assert driver.wait_for(lambda: "Agent reply" in driver.conversation_text())
     assert "Rendered Markdown" in driver.conversation_text()
     assert driver.tab_count() == 1
+    assert driver.wait_for(
+        lambda: "$0.65" in str(ui.top_bar_text_view.string())
+    )
+    assert str(ui.top_bar_text_view.string()) == (
+        "gpt-5-mini / $0.65\n"
+        "Input: 12,345 / Cached: 8,192\n"
+        "Writes: 4,096 / Output: 1,024"
+    )
+
+    ui.new_tab()
+    assert str(ui.top_bar_text_view.string()) == (
+        "gpt-5-mini / $0.00\n"
+        "Input: 0 / Cached: 0\n"
+        "Writes: 0 / Output: 0"
+    )
+    ui.close_tab(ui.active_index)
 
     release = threading.Event()
     running = threading.Thread(target=release.wait)

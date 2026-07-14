@@ -5,6 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from macagentic.agent import Control
+from macagentic.agent.usage import print_usage
 from macagentic.config import MacAgenticConfig, load_config
 
 
@@ -107,6 +108,7 @@ def main() -> None:
         model_name=model_name,
         on_output=lambda content: print(f"\nAgent: {content}"),
         on_tool_output=lambda content: print(f"\n{content}", end=""),
+        on_usage=print_usage,
         show_tool_output=args.tooloutput,
         custom_instructions=custom_instructions,
     ).start(task)

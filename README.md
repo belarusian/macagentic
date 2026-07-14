@@ -62,3 +62,8 @@ make debug-render QUERY="Show a Markdown table"
 
 Use `--model` for a one-run model override. `OPENAI_API_KEY` in `.env` remains
 supported when `openai_api_key` is not set in TOML.
+
+Models use LiteLLM's native Responses API. Configure ordinary provider model
+IDs such as `openai/gpt-5.6-terra`; do not add an `openai/responses/` bridge
+prefix. Terminal runs print cumulative input, cache, output, and cost usage
+after every model call. UI tabs show the same cumulative usage in the top bar.

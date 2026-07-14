@@ -6,10 +6,11 @@ from pathlib import Path
 
 import yaml
 from minisweagent import package_dir
-from minisweagent.models.litellm_model import LitellmModel
+from minisweagent.models.litellm_response_model import LitellmResponseModel
 
 from macagentic.agent.environment import InterruptibleLocalEnvironment
 from macagentic.agent.transcript import Transcript
+from macagentic.agent.usage import UsageAccumulator, UsageSnapshot
 
 DEFAULT_PROMPT_PATH = Path(__file__).parent / "prompts" / "default.md"
 
@@ -17,17 +18,21 @@ PermissionCallback = Callable[[str], bool]
 ClarificationCallback = Callable[[str], str | None]
 OutputCallback = Callable[[str], None]
 ToolOutputCallback = Callable[[str], None]
+UsageCallback = Callable[[UsageSnapshot], None]
 
 
 class ConsoleInterrupt(BaseException):
     """SIGINT marker that third-party retry loops must not swallow."""
 
 
-class ChatModel(LitellmModel):
+class ResponseModel(LitellmResponseModel):
     """Allow ordinary assistant replies as well as optional bash calls."""
 
     def _parse_actions(self, response) -> list[dict]:
-        if not response.choices[0].message.tool_calls:
+        if not any(
+            _value(item, "type") == "function_call"
+            for item in (_value(response, "output") or [])
+        ):
             return []
         return super()._parse_actions(response)
 
@@ -54,6 +59,7 @@ class Control:
         transcript: Transcript | None = None,
         on_output: OutputCallback | None = None,
         on_tool_output: ToolOutputCallback | None = None,
+        on_usage: UsageCallback | None = None,
         show_tool_output: bool = False,
         ask_permission: PermissionCallback | None = None,
         ask_clarification: ClarificationCallback | None = None,
@@ -66,6 +72,7 @@ class Control:
         self.transcript = transcript or Transcript()
         self.on_output = on_output
         self.on_tool_output = on_tool_output
+        self.on_usage = on_usage
         self.show_tool_output = show_tool_output
         self.ask_permission_callback = ask_permission
         self.ask_clarification_callback = ask_clarification
@@ -73,7 +80,7 @@ class Control:
         config = yaml.safe_load(
             (Path(package_dir) / "config" / "mini.yaml").read_text()
         )
-        self.model = ChatModel(
+        self.model = ResponseModel(
             **(config["model"] | {"model_name": self.model_name})
         )
         self.environment = InterruptibleLocalEnvironment(
@@ -85,6 +92,7 @@ class Control:
                 "content": load_system_prompt(custom_instructions),
             }
         ]
+        self.usage = UsageAccumulator()
 
         self._run_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -172,7 +180,7 @@ class Control:
                 return
 
             self.messages.append(response)
-            if content := response.get("content"):
+            if content := _assistant_text(response):
                 self.transcript.write(f"{content}\n\n")
                 if self.on_output is not None:
                     self.on_output(content)
@@ -218,7 +226,11 @@ class Control:
 
         def query() -> None:
             try:
-                responses.append(self.model.query(self.messages))
+                response = self.model.query(self.messages)
+                responses.append(response)
+                snapshot = self.usage.add_response(response)
+                if snapshot is not None and self.on_usage is not None:
+                    self.on_usage(snapshot)
             except BaseException as error:
                 errors.append(error)
             finally:
@@ -247,8 +259,33 @@ class Control:
         if not self.messages:
             return
         last = self.messages[-1]
-        if (
-            last.get("role") == "assistant"
-            and last.get("extra", {}).get("actions")
-        ):
+        if last.get("extra", {}).get("actions"):
             self.messages.pop()
+
+
+def _assistant_text(response: dict) -> str | None:
+    output = response.get("output")
+    if isinstance(output, list):
+        parts = []
+        for item in output:
+            if (
+                _value(item, "type") != "message"
+                or _value(item, "role") != "assistant"
+            ):
+                continue
+            for block in _value(item, "content") or []:
+                if (
+                    _value(block, "type") == "output_text"
+                    and (text := _value(block, "text"))
+                ):
+                    parts.append(str(text))
+        return "\n\n".join(parts) or None
+
+    content = response.get("content")
+    return content if isinstance(content, str) and content else None
+
+
+def _value(value: object, key: str) -> object:
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
