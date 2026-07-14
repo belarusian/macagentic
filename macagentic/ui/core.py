@@ -47,7 +47,7 @@ from Cocoa import (
     NSMutableAttributedString,
     NSMutableParagraphStyle,
 )
-from Foundation import NSURL
+from Foundation import NSTimer, NSURL
 from quickmachotkey import mask, quickHotKey
 from quickmachotkey.constants import kVK_Space, optionKey
 
@@ -245,6 +245,9 @@ class InteractionRequest:
 class MainThreadBridge(NSObject):
     ui = None
 
+    def pollSignals_(self, _timer):
+        pass
+
     def repaint_(self, _value):
         if self.ui is not None:
             self.ui.update_window()
@@ -330,6 +333,7 @@ class MacAgenticUI:
         initial_task: str | None = None,
         screenshot_path: Path | None = None,
         custom_instructions: str | None = None,
+        tool_instructions: str | None = None,
         show_tool_output: bool = False,
     ) -> None:
         self.workspace = workspace
@@ -337,6 +341,7 @@ class MacAgenticUI:
         self.initial_task = initial_task
         self.screenshot_path = screenshot_path
         self.custom_instructions = custom_instructions
+        self.tool_instructions = tool_instructions
         self.show_tool_output = show_tool_output
         self.app = None
         self.window = None
@@ -378,6 +383,15 @@ class MacAgenticUI:
             self.app.setApplicationIconImage_(self.dock_icon)
         self.new_tab()
         signal.signal(signal.SIGINT, self._handle_console_interrupt)
+        self._signal_timer = (
+            NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+                0.1,
+                self.bridge,
+                "pollSignals:",
+                None,
+                True,
+            )
+        )
         self.update_window()
         if self.initial_task:
             self.submit(self.initial_task)
@@ -394,6 +408,7 @@ class MacAgenticUI:
             ask_clarification=self.ask_clarification,
             on_usage=self._usage_changed,
             custom_instructions=self.custom_instructions,
+            tool_instructions=self.tool_instructions,
             show_tool_output=self.show_tool_output,
         )
         with self._tabs_lock:

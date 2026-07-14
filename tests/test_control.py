@@ -154,6 +154,18 @@ def test_response_model_allows_text_and_preserves_reasoning_items() -> None:
     ]
 
 
+def test_tool_instructions_are_appended_with_custom_instructions() -> None:
+    prompt = load_system_prompt(
+        "Always answer briefly.",
+        "# Available Tools\n\n## `things`\n\nUse `things list`.",
+    )
+
+    assert (
+        "## Custom Instructions\n\nAlways answer briefly.\n\n"
+        "# Available Tools\n\n## `things`\n\nUse `things list`."
+    ) in prompt
+
+
 def test_control_writes_only_conversation_text() -> None:
     transcript = Transcript()
     outputs = []
@@ -228,6 +240,36 @@ def test_interrupt_releases_turn_blocked_on_model_query() -> None:
 
     assert not turn.is_alive()
     assert "Late response" not in control.transcript.getvalue()
+
+
+def test_interrupt_releases_wait_for_clarification() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    def ask_clarification(_prompt: str) -> str:
+        started.set()
+        release.wait()
+        return "Late answer"
+
+    control = Control(
+        Path.cwd(),
+        ask_clarification=ask_clarification,
+    )
+    answers = []
+    waiting = threading.Thread(
+        target=lambda: answers.append(
+            control.request_clarification("Question?")
+        )
+    )
+    waiting.start()
+    assert started.wait(1)
+
+    control.interrupt()
+    waiting.join(1)
+    release.set()
+
+    assert not waiting.is_alive()
+    assert answers == [None]
 
 
 def test_interrupted_response_discards_pending_native_tool_call() -> None:

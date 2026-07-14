@@ -5,8 +5,19 @@ An agent harness powered by [mini-swe-agent](https://github.com/SWE-agent/mini-s
 Run in the terminal:
 
 ```sh
+make install-tools
 make run
 ```
+
+Agent tools live in `tools/<name>/` with a same-named shell launcher, a
+`main.py` implementation, `PROMPT.md`, and colocated tests. `make install-tools` creates
+safe per-user symlinks in `~/.local/bin`; ensure that directory is on `PATH`.
+Remove this project's links with `make uninstall-tools`.
+
+`make run` and `make runui` regenerate `.build/tools.md` from each tool's
+`PROMPT.md` and append it to the system prompt. They do not install tools.
+Validate tool layouts with `make check-tools` and run only tool tests with
+`make test-tools`.
 
 The harness maintains one conversation and alternates between `You:` and
 `Agent:` turns. The agent can run bash commands when needed, but answers simple

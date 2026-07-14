@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         help="Append custom system instructions from a Markdown file",
     )
     parser.add_argument(
+        "--tool-instructions",
+        type=Path,
+        help="Append generated tool documentation to the system prompt",
+    )
+    parser.add_argument(
         "--ui",
         action="store_true",
         help="Start the optional native macOS UI",
@@ -65,6 +70,15 @@ def _custom_instructions(
     return instructions
 
 
+def _tool_instructions(args: argparse.Namespace) -> str | None:
+    if args.tool_instructions is None:
+        return None
+    instructions = args.tool_instructions.read_text()
+    if not instructions.strip():
+        raise SystemExit("The tool instructions file must not be empty.")
+    return instructions
+
+
 def main() -> None:
     load_dotenv()
     args = parse_args()
@@ -73,6 +87,7 @@ def main() -> None:
         os.environ["OPENAI_API_KEY"] = config.openai_api_key
     task = _initial_task(args)
     custom_instructions = _custom_instructions(args, config)
+    tool_instructions = _tool_instructions(args)
     model_name = args.model or config.model
 
     if args.ui:
@@ -88,6 +103,7 @@ def main() -> None:
             initial_task=task,
             screenshot_path=args.screenshot,
             custom_instructions=custom_instructions,
+            tool_instructions=tool_instructions,
             show_tool_output=args.tooloutput,
         )
         return
@@ -111,4 +127,5 @@ def main() -> None:
         on_usage=print_usage,
         show_tool_output=args.tooloutput,
         custom_instructions=custom_instructions,
+        tool_instructions=tool_instructions,
     ).start(task)

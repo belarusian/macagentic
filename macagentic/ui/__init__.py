@@ -8,6 +8,7 @@ def run_ui(
     initial_task: str | None = None,
     screenshot_path: Path | None = None,
     custom_instructions: str | None = None,
+    tool_instructions: str | None = None,
     show_tool_output: bool = False,
 ) -> None:
     from macagentic.ui.core import MacAgenticUI
@@ -18,6 +19,7 @@ def run_ui(
         initial_task=initial_task,
         screenshot_path=screenshot_path,
         custom_instructions=custom_instructions,
+        tool_instructions=tool_instructions,
         show_tool_output=show_tool_output,
     ).start()
 

@@ -37,14 +37,25 @@ class ResponseModel(LitellmResponseModel):
         return super()._parse_actions(response)
 
 
-def load_system_prompt(custom_instructions: str | None = None) -> str:
+def load_system_prompt(
+    custom_instructions: str | None = None,
+    tool_instructions: str | None = None,
+) -> str:
     base_prompt = DEFAULT_PROMPT_PATH.read_text()
-    if not custom_instructions or not custom_instructions.strip():
+    sections = []
+    if custom_instructions and custom_instructions.strip():
+        sections.append(
+            "## Custom Instructions\n\n"
+            f"{custom_instructions.strip()}"
+        )
+    if tool_instructions and tool_instructions.strip():
+        sections.append(tool_instructions.strip())
+    if not sections:
         return base_prompt
     return (
         f"{base_prompt.rstrip()}\n\n"
-        "## Custom Instructions\n\n"
-        f"{custom_instructions.strip()}\n"
+        + "\n\n".join(sections)
+        + "\n"
     )
 
 
@@ -64,6 +75,7 @@ class Control:
         ask_permission: PermissionCallback | None = None,
         ask_clarification: ClarificationCallback | None = None,
         custom_instructions: str | None = None,
+        tool_instructions: str | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         self.model_name = model_name or os.getenv(
@@ -89,7 +101,10 @@ class Control:
         self.messages: list[dict] = [
             {
                 "role": "system",
-                "content": load_system_prompt(custom_instructions),
+                "content": load_system_prompt(
+                    custom_instructions,
+                    tool_instructions,
+                ),
             }
         ]
         self.usage = UsageAccumulator()
@@ -158,13 +173,19 @@ class Control:
 
     def request_permission(self, prompt: str) -> bool:
         if self.ask_permission_callback is not None:
-            return self.ask_permission_callback(prompt)
+            return bool(
+                self._wait_for_input(self.ask_permission_callback, prompt)
+            )
         answer = input(f"{prompt} [y/N] ").strip().lower()
         return answer in {"y", "yes"}
 
     def request_clarification(self, prompt: str) -> str | None:
         if self.ask_clarification_callback is not None:
-            return self.ask_clarification_callback(prompt)
+            answer = self._wait_for_input(
+                self.ask_clarification_callback,
+                prompt,
+            )
+            return answer if isinstance(answer, str) else None
         try:
             return input(f"{prompt}\n> ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -254,6 +275,41 @@ class Control:
     def _is_cancelled(self, run_id: int) -> bool:
         with self._state_lock:
             return self._cancel_event.is_set() or run_id != self._run_id
+
+    def _wait_for_input(
+        self,
+        callback: Callable[[str], object],
+        prompt: str,
+    ) -> object | None:
+        with self._state_lock:
+            run_id = self._run_id
+
+        completed = threading.Event()
+        answers: list[object] = []
+        errors: list[BaseException] = []
+
+        def wait() -> None:
+            try:
+                answers.append(callback(prompt))
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                completed.set()
+
+        threading.Thread(
+            target=wait,
+            name="macagentic-input",
+            daemon=True,
+        ).start()
+
+        while not completed.wait(0.05):
+            if self._is_cancelled(run_id):
+                return None
+        if self._is_cancelled(run_id):
+            return None
+        if errors:
+            raise errors[0]
+        return answers[0]
 
     def _discard_incomplete_tool_call(self) -> None:
         if not self.messages:
