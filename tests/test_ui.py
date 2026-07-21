@@ -3,6 +3,8 @@ import threading
 
 import pytest
 
+Cocoa = pytest.importorskip("Cocoa", reason="Cocoa UI requires macOS")
+
 from macagentic.agent.transcript import Transcript
 from macagentic.agent.usage import UsageAccumulator
 from macagentic.ui.testing import UITestDriver

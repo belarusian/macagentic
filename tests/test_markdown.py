@@ -1,3 +1,6 @@
+import pytest
+
+Cocoa = pytest.importorskip("Cocoa", reason="Cocoa renderer requires macOS")
 from Cocoa import NSColor, NSParagraphStyleAttributeName
 
 from macagentic.ui.markdown import MarkdownRenderer
