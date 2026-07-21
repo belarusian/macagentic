@@ -8,8 +8,8 @@ dependencies = [
     "litellm>=1.75.5,<1.92",
     "markdown-it-py>=4.2.0",
     "mini-swe-agent",
-    "pyobjc>=12.2.1",
-    "quickmachotkey>=2025.7.28",
+    "pyobjc>=12.2.1; sys_platform == 'darwin'",
+    "quickmachotkey>=2025.7.28; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]
