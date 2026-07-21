@@ -108,7 +108,7 @@ def uninstall_tools(tools_root: Path, bin_dir: Path) -> None:
 def write_prompt(tools: list[Tool], output: Path) -> None:
     sections = ["# Available Tools"]
     for tool in tools:
-        sections.append(f"{tool.prompt.read_text().strip()}")
+        sections.append(f"## `{tool.name}`\n\n{tool.prompt.read_text().strip()}")
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n\n".join(sections) + "\n")
     print(f"wrote: {output}")
